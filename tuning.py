@@ -108,7 +108,7 @@ def objective(params):
     # create instance of TabularModel
     model = tr.TabularModel(emb_sizes, len(dpr.cont_cols), layers, float(dp))
     # create instance of FastAI's learner
-    learn = Learner(tuning_dls, model, loss_func = torch.nn.SmoothL1Loss(), metrics = rmse, wd = float(wd))
+    learn = Learner(tuning_dls, model, loss_func = nn.SmoothL1Loss(), metrics = rmse, wd = float(wd))
 
     # train
     with learn.no_bar(), learn.no_logging():

@@ -52,7 +52,7 @@ def convert_mean_stddev_into_tensors():
     stats_dict = spark.table('stats_v').first().asDict() 
 
     # convert into PyTorch tensors
-    mean_tensor = torch.tensor([stats_dict[f'{c}_mean']  for c in cont_cols], dtype = torch.float32)
+    mean_tensor = torch.tensor([stats_dict[f'{c}_mean'] for c in cont_cols], dtype = torch.float32)
     stddev_tensor = torch.tensor([stats_dict[f'{c}_stddev'] for c in cont_cols], dtype = torch.float32).clamp_min(1e-5) # avoid division by zero
 
     return mean_tensor, stddev_tensor
@@ -92,11 +92,11 @@ def clean_and_split(path, train_fraction, chronological_split):
                 # very short / long trips can be error entries
                 F.col('distance_km').between(0.01, F.lit(upper_distance_limit))          
             )
-            # Eastern Daylight Time (NYC in April)
-            .withColumn('edt_pickup_datetime', F.to_timestamp('pickup_datetime') - F.expr('INTERVAL 4 HOURS'))
-            .withColumn('hour', F.hour('edt_pickup_datetime')) # from 0 to 23
+            # convert from UTC to NYC time
+            .withColumn('nyc_pickup_datetime', F.from_utc_timestamp(F.to_timestamp('pickup_datetime'), 'America/New_York'))
+            .withColumn('hour', F.hour('nyc_pickup_datetime')) # from 0 to 23
             .withColumn('am_pm', F.when(F.col('hour') < 12, 0).otherwise(1)) # from 0 to 1
-            .withColumn('weekday', F.dayofweek('edt_pickup_datetime') - 1) # from 0 to 6
+            .withColumn('weekday', F.dayofweek('nyc_pickup_datetime') - 1) # from 0 to 6
     )
 
     # perform train valid split (randomly)
@@ -104,7 +104,7 @@ def clean_and_split(path, train_fraction, chronological_split):
         train_df, valid_df = df.randomSplit([train_fraction, 1.0 - train_fraction], seed = 42)
     # alternatively perform chronological split
     else:
-        df = df.withColumn('seconds_count', F.col('edt_pickup_datetime').cast('long'))
+        df = df.withColumn('seconds_count', F.col('nyc_pickup_datetime').cast('long'))
         threshold = df.approxQuantile('seconds_count', [train_fraction], 0.01)[0]
         train_df = df.where(F.col('seconds_count') < threshold)
         valid_df = df.where(F.col('seconds_count') >= threshold)
