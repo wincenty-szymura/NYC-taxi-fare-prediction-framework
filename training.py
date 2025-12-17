@@ -32,7 +32,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') # switch t
 class SparkBatchDataset(IterableDataset):
     """Iterable dataset streaming batches from a temp view for main training."""
 
-    def __init__(self, view, cat_cols, cont_cols, y_col, mean, stddev, batch_size, n_partitions = 1):
+    def __init__(self, view, view_size, cat_cols, cont_cols, y_col, mean, stddev, batch_size, n_partitions = 1):
         self.view = view # dataset in the form of temp view
         self.cat_cols = cat_cols
         self.cont_cols = cont_cols
@@ -41,7 +41,7 @@ class SparkBatchDataset(IterableDataset):
         self.stddev = stddev # PyTorch tensor with standard deviations of continuous columns
         self.n_partitions = n_partitions # the dataset will be split into n_partitions for reading into memory
         self.batch_size = batch_size # mini-batch training
-        self.total_rows = spark.table(view).count()
+        self.total_rows = view_size
 
     def __len__(self):
         return self.total_rows
@@ -103,21 +103,23 @@ class TabularModel(nn.Module):
 # Functions
 # --------------------------------------------------------------------------------------------------------------------------------------------
 
-def train_model(best, utilisation = 0.1, number_of_epochs = number_of_epochs):
+def train_model(best, train_set_size, valid_set_size, utilisation = 0.1, number_of_epochs = number_of_epochs):
     """Train the model."""
+
+    spark.catalog.uncacheTable('sample_v') # uncache the view to free up memory
 
     emb_sizes = dpr.get_embedding_sizes()
     # get means and standard deviations of continuous features from temp view as PyTorch tensors
     mean, stddev = dpr.convert_mean_stddev_into_tensors()
 
     # get number of partitions - round up to get enough partitions to never exceed max rows within a partition
-    n_partitions = math.ceil(spark.table('train_v').count() / dpr.get_max_rows(spark.table('train_v'), dpr.available_memory, utilisation))
+    n_partitions = math.ceil(train_set_size / dpr.get_max_rows(spark.table('train_v'), train_set_size, dpr.available_memory, utilisation))
 
     # define train and valid PyTorch dataloaders
     # automatic batching is disabled as batching is handled in the SparkBatchDataset class 
     # this means the data do not have the extra batch dimension (https://docs.pytorch.org/docs/stable/data.html)
-    train_dl = DataLoader(SparkBatchDataset('train_v', dpr.cat_cols, dpr.cont_cols, dpr.y_col, mean, stddev, batch_size, n_partitions), batch_size = None)
-    valid_dl = DataLoader(SparkBatchDataset('valid_v', dpr.cat_cols, dpr.cont_cols, dpr.y_col, mean, stddev, batch_size), batch_size = None)
+    train_dl = DataLoader(SparkBatchDataset('train_v', train_set_size, dpr.cat_cols, dpr.cont_cols, dpr.y_col, mean, stddev, batch_size, n_partitions), batch_size = None)
+    valid_dl = DataLoader(SparkBatchDataset('valid_v', valid_set_size, dpr.cat_cols, dpr.cont_cols, dpr.y_col, mean, stddev, batch_size), batch_size = None)
 
     # wrap in FastAI dataloaders object
     dls = DataLoaders(train_dl, valid_dl, device = device)
