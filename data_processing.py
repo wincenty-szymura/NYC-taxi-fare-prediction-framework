@@ -43,6 +43,9 @@ def compute_mean_stddev():
     # define temp view which can be referenced between modules
     stats_df.createOrReplaceTempView('stats_v')
 
+    # cache the view so it does not have to be recomputed
+    spark.catalog.cacheTable('stats_v')
+
 # --------------------------------------------------------------------------------------------------------------------------------------------
 
 def convert_mean_stddev_into_tensors():
@@ -118,24 +121,27 @@ def clean_and_split(path, train_fraction, chronological_split):
     train_df.select(*(cols + ['monotonic_id'])).createOrReplaceTempView('train_v')
     valid_df.select(*cols).createOrReplaceTempView('valid_v')
 
+    return train_df.count(), valid_df.count()
+
 # --------------------------------------------------------------------------------------------------------------------------------------------
 
-def get_max_rows(df, available_memory, utilisation):
+def get_max_rows(df, df_size, available_memory, utilisation):
     """Compute maximum number of rows that can be loaded into memory."""
 
-    probe = df.sample(fraction = min(1.0, 1000/df.count()), seed = 42).toPandas() # sample to probe memory usage
+    probe = df.sample(fraction = min(1.0, 1000/df_size), seed = 42).toPandas() # sample to probe memory usage
     memory_per_row = probe.memory_usage(deep = True).sum() / len(probe) # in bytes
     return utilisation * available_memory / memory_per_row
 
 # --------------------------------------------------------------------------------------------------------------------------------------------
 
-def prepare_sample_for_tuning():
+def prepare_sample_for_tuning(train_set_size):
     """Prepare a sample of the dataset for hyperparameter tuning."""
 
     train_df = spark.table('train_v') # get train df from temp view
-    rows_for_tuning = min(get_max_rows(train_df, available_memory, 0.1), 100000)
-    sample_df = train_df.sample(fraction = min(1.0, rows_for_tuning/train_df.count()), seed = 42) # prepare the sample
+    rows_for_tuning = min(get_max_rows(train_df, train_set_size, available_memory, 0.1), 100000)
+    sample_df = train_df.sample(fraction = min(1.0, rows_for_tuning/train_set_size), seed = 42) # prepare the sample
     sample_df.createOrReplaceTempView('sample_v') # define temp view which can be referenced between modules
+    spark.catalog.cacheTable('sample_v') # cache the view so it does not have to be recomputed
 
 # --------------------------------------------------------------------------------------------------------------------------------------------
 
